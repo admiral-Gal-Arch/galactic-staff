@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit_authenticator as stauth
 from pymongo.server_api import ServerApi
 from bson import ObjectId
-import os  # <-- IMPORT OS
+import os
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -15,13 +15,12 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 1. MongoDB Connection (UPDATED) ---
+# --- 1. MongoDB Connection ---
 
 @st.cache_resource
 def init_connection():
     """Initialize a connection to MongoDB Atlas."""
     try:
-        # Use os.environ.get() instead of st.secrets
         uri = os.environ.get("MONGO_URI")
         if not uri:
             st.error("MONGO_URI environment variable not set.")
@@ -81,7 +80,7 @@ credentials = {
     }
 }
 
-# --- Initialize the Authenticator (UPDATED) ---
+# --- Initialize the Authenticator ---
 try:
     authenticator = stauth.Authenticate(
         credentials,
@@ -94,20 +93,48 @@ except Exception as e:
     st.stop()
 
 
-# --- Render the Login Widget (THIS IS THE FIX) ---
-# If authenticator.login() returns None, use (None, None, None) instead
-name, authentication_status, username = authenticator.login() or (None, None, None)
-
-
 # --- 3. View Management (Session State) ---
+# Initialize session state variables
 if "view" not in st.session_state:
     st.session_state.view = "dashboard"
 if "selected_ticket_id" not in st.session_state:
     st.session_state.selected_ticket_id = None
+if "authentication_status" not in st.session_state:
+    st.session_state.authentication_status = None
+if "name" not in st.session_state:
+    st.session_state.name = None
 
 
-# --- 4. Main Application ---
-# ... (Rest of the file is identical) ...
+# --- 4. Main Application Logic (NEW STRUCTURE) ---
+
+# First, render the login widget. It will automatically update session state.
+name, authentication_status, username = authenticator.login()
+
+# Now, check the session state that the widget just updated.
+if st.session_state.authentication_status:
+    # --- LOGGED-IN VIEW ---
+    st.sidebar.title(f"Welcome, *{st.session_state.name}*")
+    authenticator.logout('Logout', 'sidebar')
+
+    staff_name_list = [user["name"] for user in users]
+
+    if st.session_state.view == "dashboard":
+        show_dashboard(staff_name_list)
+    elif st.session_state.view == "detail":
+        show_ticket_detail(st.session_state.selected_ticket_id, staff_name_list)
+
+elif st.session_state.authentication_status == False:
+    # --- LOGIN FAILED ---
+    st.error('Username/password is incorrect')
+
+elif st.session_state.authentication_status == None:
+    # --- DEFAULT LOGIN VIEW ---
+    # The login form is already on the page (from authenticator.login())
+    # We no longer show the "Please enter" warning.
+    pass
+
+
+# --- 5. Dashboard and Detail Functions (Unchanged) ---
 
 def show_dashboard(staff_list):
     st.title("🛰️ Support Center Dashboard")
@@ -243,7 +270,7 @@ def show_ticket_detail(ticket_id, staff_list):
         
         from datetime import datetime
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        note_entry = f"--- Update by {name} ({now}) ---\n{new_notes}\n\n"
+        note_entry = f"--- Update by {st.session_state.name} ({now}) ---\n{new_notes}\n\n"
         
         final_notes = note_entry + current_notes if new_notes.strip() else current_notes
 
@@ -266,21 +293,3 @@ def show_ticket_detail(ticket_id, staff_list):
 
         except Exception as e:
             st.error(f"Failed to update ticket: {e}")
-
-# --- Main App Logic ---
-
-if authentication_status:
-    st.sidebar.title(f"Welcome, *{name}*")
-    authenticator.logout('Logout', 'sidebar')
-
-    staff_name_list = [user["name"] for user in users]
-
-    if st.session_state.view == "dashboard":
-        show_dashboard(staff_name_list)
-    elif st.session_state.view == "detail":
-        show_ticket_detail(st.session_state.selected_ticket_id, staff_name_list)
-
-elif authentication_status == False:
-    st.error('Username/password is incorrect')
-elif authentication_status == None:
-    st.warning('Please enter your username and password')
