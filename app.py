@@ -103,39 +103,7 @@ if "authentication_status" not in st.session_state:
 if "name" not in st.session_state:
     st.session_state.name = None
 
-
-# --- 4. Main Application Logic (UPDATED) ---
-
-# --- THIS IS THE FIX ---
-# Add 'or (None, None, None)' to provide a default value
-name, authentication_status, username = authenticator.login() or (None, None, None)
-
-
-# Now, check the session state that the widget just updated.
-if st.session_state.authentication_status:
-    # --- LOGGED-IN VIEW ---
-    st.sidebar.title(f"Welcome, *{st.session_state.name}*")
-    authenticator.logout('Logout', 'sidebar')
-
-    staff_name_list = [user["name"] for user in users]
-
-    if st.session_state.view == "dashboard":
-        show_dashboard(staff_name_list)
-    elif st.session_state.view == "detail":
-        show_ticket_detail(st.session_state.selected_ticket_id, staff_name_list)
-
-elif st.session_state.authentication_status == False:
-    # --- LOGIN FAILED ---
-    st.error('Username/password is incorrect')
-
-elif st.session_state.authentication_status == None:
-    # --- DEFAULT LOGIN VIEW ---
-    # The login form is already on the page (from authenticator.login())
-    pass
-
-
-# --- 5. Dashboard and Detail Functions (Unchanged) ---
-# ... (all the function definitions from before) ...
+# --- 4. Page View Functions (MOVED HERE) ---
 
 def show_dashboard(staff_list):
     st.title("🛰️ Support Center Dashboard")
@@ -294,3 +262,31 @@ def show_ticket_detail(ticket_id, staff_list):
 
         except Exception as e:
             st.error(f"Failed to update ticket: {e}")
+
+
+# --- 5. Main Application Logic ---
+
+# Add the 'or (None, None, None)' to provide a default value
+name, authentication_status, username = authenticator.login() or (None, None, None)
+
+# Now, check the session state that the widget just updated.
+if st.session_state.authentication_status:
+    # --- LOGGED-IN VIEW ---
+    st.sidebar.title(f"Welcome, *{st.session_state.name}*")
+    authenticator.logout('Logout', 'sidebar')
+
+    staff_name_list = [user["name"] for user in users]
+
+    if st.session_state.view == "dashboard":
+        show_dashboard(staff_name_list) # <-- This call will now work
+    elif st.session_state.view == "detail":
+        show_ticket_detail(st.session_state.selected_ticket_id, staff_name_list)
+
+elif st.session_state.authentication_status == False:
+    # --- LOGIN FAILED ---
+    st.error('Username/password is incorrect')
+
+elif st.session_state.authentication_status == None:
+    # --- DEFAULT LOGIN VIEW ---
+    # The login form is already on the page
+    pass
