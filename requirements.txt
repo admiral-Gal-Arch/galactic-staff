@@ -1,0 +1,6 @@
+# requirements.txt
+
+streamlit
+pymongo
+streamlit-authenticator
+pyarrow

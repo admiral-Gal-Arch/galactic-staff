@@ -1,0 +1,39 @@
+# .gitignore
+
+# --- Secrets ---
+# CRITICAL: Never commit your secrets file!
+.streamlit/secrets.toml
+
+# --- Python Virtual Environments ---
+.env/
+.venv/
+env/
+venv/
+ENV/
+
+# --- Python Cache & Compiled Files ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# --- Python Distribution / Packaging ---
+build/
+dist/
+*.egg-info/
+*.egg
+wheels/
+
+# --- Test & Coverage Reports ---
+.pytest_cache/
+.coverage
+htmlcov/
+pytest-report.html
+
+# --- IDE & Editor Folders ---
+.vscode/
+.idea/
+
+# --- OS-specific Files ---
+.DS_Store
+Thumbs.db
