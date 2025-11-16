@@ -94,7 +94,6 @@ except Exception as e:
 
 
 # --- 3. View Management (Session State) ---
-# Initialize session state variables
 if "view" not in st.session_state:
     st.session_state.view = "dashboard"
 if "selected_ticket_id" not in st.session_state:
@@ -105,10 +104,12 @@ if "name" not in st.session_state:
     st.session_state.name = None
 
 
-# --- 4. Main Application Logic (NEW STRUCTURE) ---
+# --- 4. Main Application Logic (UPDATED) ---
 
-# First, render the login widget. It will automatically update session state.
-name, authentication_status, username = authenticator.login()
+# --- THIS IS THE FIX ---
+# Add 'or (None, None, None)' to provide a default value
+name, authentication_status, username = authenticator.login() or (None, None, None)
+
 
 # Now, check the session state that the widget just updated.
 if st.session_state.authentication_status:
@@ -130,11 +131,11 @@ elif st.session_state.authentication_status == False:
 elif st.session_state.authentication_status == None:
     # --- DEFAULT LOGIN VIEW ---
     # The login form is already on the page (from authenticator.login())
-    # We no longer show the "Please enter" warning.
     pass
 
 
 # --- 5. Dashboard and Detail Functions (Unchanged) ---
+# ... (all the function definitions from before) ...
 
 def show_dashboard(staff_list):
     st.title("🛰️ Support Center Dashboard")
