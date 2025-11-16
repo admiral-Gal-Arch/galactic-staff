@@ -5,7 +5,8 @@ import pymongo
 import pandas as pd
 import streamlit_authenticator as stauth
 from pymongo.server_api import ServerApi
-from bson import ObjectId # Import ObjectId to query by _id
+from bson import ObjectId
+import os  # <-- IMPORT OS
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -14,13 +15,18 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 1. MongoDB Connection ---
+# --- 1. MongoDB Connection (UPDATED) ---
 
 @st.cache_resource
 def init_connection():
     """Initialize a connection to MongoDB Atlas."""
     try:
-        uri = st.secrets["mongo"]["uri"]
+        # Use os.environ.get() instead of st.secrets
+        uri = os.environ.get("MONGO_URI")
+        if not uri:
+            st.error("MONGO_URI environment variable not set.")
+            return None
+            
         client = pymongo.MongoClient(uri, server_api=ServerApi('1'))
         client.admin.command('ping')
         return client
@@ -35,12 +41,10 @@ if client is None:
 
 @st.cache_resource
 def get_database(db_name):
-    """Get a database from the client."""
     return client[db_name]
 
 @st.cache_resource
 def get_collection(db_name, collection_name):
-    """Get a collection from a database."""
     db = get_database(db_name)
     return db[collection_name]
 
@@ -78,15 +82,23 @@ credentials = {
 }
 
 # --- Initialize the Authenticator (UPDATED) ---
-# Reads from the new [staff_cookie] section
-authenticator = stauth.Authenticate(
-    credentials,
-    st.secrets["staff_cookie"]["cookie_name"],
-    st.secrets["staff_cookie"]["cookie_key"],
-    st.secrets["staff_cookie"]["expiry_days"]
-)
+# Read from os.environ.get()
+try:
+    authenticator = stauth.Authenticate(
+        credentials,
+        os.environ.get("STAFF_COOKIE_NAME"),
+        os.environ.get("STAFF_COOKIE_KEY"),
+        # Get expiry, default to 7 days, and convert to int
+        int(os.environ.get("STAFF_COOKIE_EXPIRY", 7)) 
+    )
+except Exception as e:
+    st.error(f"Error initializing authenticator: {e}. Check cookie environment variables.")
+    st.stop()
 
-name, authentication_status, username = authenticator.login('Login', 'main')
+
+# --- Render the Login Widget ---
+name, authentication_status, username = authenticator.login()
+
 
 # --- 3. View Management (Session State) ---
 if "view" not in st.session_state:
@@ -98,21 +110,18 @@ if "selected_ticket_id" not in st.session_state:
 # --- 4. Main Application ---
 
 def show_dashboard(staff_list):
-    """Displays the main ticket queue dashboard."""
     st.title("🛰️ Support Center Dashboard")
     st.write("Select a ticket from the queue to view and edit details.")
 
-    # --- Data Fetching ---
     @st.cache_data(ttl=60)
     def get_all_tickets():
-        """Fetch all tickets, including their MongoDB _id."""
         try:
             tickets = list(tickets_collection.find({}, {}))
             if not tickets:
                 return pd.DataFrame(columns=["_id", "status", "subject", "user_email", "created_at", "assigned_to"])
             
             df = pd.DataFrame(tickets)
-            df["_id"] = df["_id"].astype(str) # Convert _id to string
+            df["_id"] = df["_id"].astype(str)
             return df
         except Exception as e:
             st.error(f"Error fetching tickets: {e}")
@@ -124,7 +133,6 @@ def show_dashboard(staff_list):
         st.success("No open tickets! 🚀")
         return
 
-    # --- Sidebar Filters ---
     st.sidebar.header("Filter Tickets")
     
     if "status" not in df_tickets.columns: df_tickets["status"] = "Unknown"
@@ -137,7 +145,6 @@ def show_dashboard(staff_list):
     selected_status = st.sidebar.selectbox("Filter by Status:", status_options)
     selected_assignee = st.sidebar.selectbox("Filter by Assignee:", assignee_options)
 
-    # --- Apply Filters ---
     filtered_df = df_tickets.copy()
 
     if selected_status != "All":
@@ -148,7 +155,6 @@ def show_dashboard(staff_list):
     elif selected_assignee != "All":
         filtered_df = filtered_df[filtered_df["assigned_to"] == selected_assignee]
 
-    # --- Display the Ticket Queue ---
     st.dataframe(
         filtered_df,
         key="ticket_queue",
@@ -167,7 +173,6 @@ def show_dashboard(staff_list):
         hide_index=True
     )
     
-    # --- Handle Row Selection ---
     if st.session_state.ticket_queue.selection.rows:
         selected_row_index = st.session_state.ticket_queue.selection.rows[0]
         selected_id = filtered_df.iloc[selected_row_index]["_id"]
@@ -178,7 +183,6 @@ def show_dashboard(staff_list):
 
 
 def show_ticket_detail(ticket_id, staff_list):
-    """Displays the detail and action view for a single ticket."""
     
     if st.button("← Back to Dashboard"):
         st.session_state.view = "dashboard"
@@ -188,7 +192,6 @@ def show_ticket_detail(ticket_id, staff_list):
     st.title("Manage Ticket Details")
     st.markdown(f"**Ticket ID:** `{ticket_id}`")
 
-    # --- Fetch Ticket Data ---
     try:
         current_ticket = tickets_collection.find_one({"_id": ObjectId(ticket_id)})
     except Exception as e:
@@ -199,7 +202,6 @@ def show_ticket_detail(ticket_id, staff_list):
         st.error("Ticket not found.")
         return
 
-    # --- Display Ticket Info ---
     st.subheader("Ticket Information")
     col1, col2 = st.columns(2)
     col1.metric("Status", current_ticket.get("status", "N/A"))
@@ -210,7 +212,6 @@ def show_ticket_detail(ticket_id, staff_list):
     
     st.divider()
     
-    # --- Action Form ---
     st.subheader("Support Actions")
     
     current_status = current_ticket.get("status", "New")
@@ -225,33 +226,16 @@ def show_ticket_detail(ticket_id, staff_list):
     
     try:
         status_index = status_options.index(current_status)
-    except ValueError:
-        status_index = 0
+    except ValueError: status_index = 0
         
     try:
         assignee_index = assignee_options.index(current_assignee if current_assignee else "Unassigned")
-    except ValueError:
-        assignee_index = 0
+    except ValueError: assignee_index = 0
 
     with st.form("update_ticket_form"):
-        new_status = st.selectbox(
-            "Update Status", 
-            options=status_options,
-            index=status_index
-        )
-        
-        new_assignee = st.selectbox(
-            "Assign To", 
-            options=assignee_options,
-            index=assignee_index
-        )
-        
-        new_notes = st.text_area(
-            "Add Internal Notes (new notes will be prepended)", 
-            value="",
-            placeholder="Type your update here..."
-        )
-        
+        new_status = st.selectbox("Update Status", options=status_options, index=status_index)
+        new_assignee = st.selectbox("Assign To", options=assignee_options, index=assignee_index)
+        new_notes = st.text_area("Add Internal Notes (new notes will be prepended)", value="", placeholder="Type your update here...")
         submitted = st.form_submit_button("Save Changes")
 
     if submitted:
@@ -275,14 +259,13 @@ def show_ticket_detail(ticket_id, staff_list):
                 }
             )
             st.success("Ticket updated successfully!")
-            get_all_tickets.clear() # Clear cache
+            get_all_tickets.clear()
             st.session_state.view = "dashboard"
             st.session_state.selected_ticket_id = None
             st.rerun()
 
         except Exception as e:
             st.error(f"Failed to update ticket: {e}")
-
 
 # --- Main App Logic ---
 
