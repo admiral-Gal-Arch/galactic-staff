@@ -82,13 +82,11 @@ credentials = {
 }
 
 # --- Initialize the Authenticator (UPDATED) ---
-# Read from os.environ.get()
 try:
     authenticator = stauth.Authenticate(
         credentials,
         os.environ.get("STAFF_COOKIE_NAME"),
         os.environ.get("STAFF_COOKIE_KEY"),
-        # Get expiry, default to 7 days, and convert to int
         int(os.environ.get("STAFF_COOKIE_EXPIRY", 7)) 
     )
 except Exception as e:
@@ -96,8 +94,9 @@ except Exception as e:
     st.stop()
 
 
-# --- Render the Login Widget ---
-name, authentication_status, username = authenticator.login()
+# --- Render the Login Widget (THIS IS THE FIX) ---
+# If authenticator.login() returns None, use (None, None, None) instead
+name, authentication_status, username = authenticator.login() or (None, None, None)
 
 
 # --- 3. View Management (Session State) ---
@@ -108,6 +107,7 @@ if "selected_ticket_id" not in st.session_state:
 
 
 # --- 4. Main Application ---
+# ... (Rest of the file is identical) ...
 
 def show_dashboard(staff_list):
     st.title("🛰️ Support Center Dashboard")
