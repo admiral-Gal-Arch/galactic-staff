@@ -69,14 +69,15 @@ if not users:
     st.error("No staff users found in the database. Please add a user.")
     st.stop()
 
+# Use .get() for safety
 credentials = {
     "usernames": {
-        user["username"]: {
-            "name": user["name"],
-            "email": user["email"],
-            "password": user["password"]
+        user.get("username"): {
+            "name": user.get("name"),
+            "email": user.get("email"),
+            "password": user.get("password")
         }
-        for user in users
+        for user in users if user.get("username")
     }
 }
 
@@ -102,57 +103,85 @@ if "authentication_status" not in st.session_state:
     st.session_state.authentication_status = None
 if "name" not in st.session_state:
     st.session_state.name = None
+if "page" not in st.session_state: # --- NEW: For pagination ---
+    st.session_state.page = 0
 
-# --- 4. Page View Functions (MOVED HERE) ---
+# --- 4. Page View Functions ---
 
 def show_dashboard(staff_list):
     st.title("🛰️ Support Center Dashboard")
     st.write("Select a ticket from the queue to view and edit details.")
 
+    PAGE_SIZE = 50 # --- NEW: Set how many tickets per page ---
+
+    # --- NEW: Callback to reset page when filters change ---
+    def reset_page():
+        st.session_state.page = 0
+
+    # --- UPDATED: Get_all_tickets now performs filtering and pagination ---
     @st.cache_data(ttl=60)
-    def get_all_tickets():
+    def get_all_tickets(page_number, page_size, status_filter, assignee_filter):
         try:
-            tickets = list(tickets_collection.find({}, {}))
+            # Build the query
+            query = {}
+            if status_filter != "All":
+                query["status"] = status_filter
+            if assignee_filter == "Unassigned":
+                query["assigned_to"] = {"$in": [None, ""]}
+            elif assignee_filter != "All":
+                query["assigned_to"] = assignee_filter
+
+            # Get total count for pagination
+            total_tickets = tickets_collection.count_documents(query)
+
+            # Calculate skip
+            skip_amount = page_number * page_size
+            
+            # Fetch the paginated and filtered data
+            tickets = list(
+                tickets_collection.find(query, {})
+                .sort("created_at", pymongo.DESCENDING)
+                .skip(skip_amount)
+                .limit(page_size)
+            )
+            
             if not tickets:
-                return pd.DataFrame(columns=["_id", "status", "subject", "user_email", "created_at", "assigned_to"])
+                return pd.DataFrame(columns=["_id", "status", "subject", "user_email", "created_at", "assigned_to"]), 0
             
             df = pd.DataFrame(tickets)
             df["_id"] = df["_id"].astype(str)
-            return df
+            return df, total_tickets
+        
         except Exception as e:
             st.error(f"Error fetching tickets: {e}")
-            return pd.DataFrame()
+            return pd.DataFrame(), 0
 
-    df_tickets = get_all_tickets()
-
-    if df_tickets.empty:
-        st.success("No open tickets! 🚀")
-        return
-
+    # --- Sidebar Filters ---
     st.sidebar.header("Filter Tickets")
     
-    if "status" not in df_tickets.columns: df_tickets["status"] = "Unknown"
-    if "assigned_to" not in df_tickets.columns: df_tickets["assigned_to"] = None
-
-    status_options = ["All"] + list(df_tickets["status"].fillna("Unknown").unique())
+    # Get unique values for filters
+    status_options = ["All", "New", "In Progress", "Awaiting User", "Closed"]
     assignee_list = ["Unassigned"] + staff_list
     assignee_options = ["All"] + list(pd.Series(assignee_list).unique())
 
-    selected_status = st.sidebar.selectbox("Filter by Status:", status_options)
-    selected_assignee = st.sidebar.selectbox("Filter by Assignee:", assignee_options)
+    # --- UPDATED: Add on_change callback ---
+    selected_status = st.sidebar.selectbox("Filter by Status:", status_options, on_change=reset_page)
+    selected_assignee = st.sidebar.selectbox("Filter by Assignee:", assignee_options, on_change=reset_page)
 
-    filtered_df = df_tickets.copy()
+    # --- Call the updated function ---
+    df_tickets, total_tickets = get_all_tickets(
+        st.session_state.page, PAGE_SIZE, selected_status, selected_assignee
+    )
+    
+    total_pages = (total_tickets + PAGE_SIZE - 1) // PAGE_SIZE
 
-    if selected_status != "All":
-        filtered_df = filtered_df[filtered_df["status"].fillna("Unknown") == selected_status]
-
-    if selected_assignee == "Unassigned":
-        filtered_df = filtered_df[filtered_df["assigned_to"].isna() | (filtered_df["assigned_to"] == "")]
-    elif selected_assignee != "All":
-        filtered_df = filtered_df[filtered_df["assigned_to"] == selected_assignee]
-
+    if df_tickets.empty:
+        st.success("No tickets found for these filters. 🚀")
+        return
+    
+    # --- Display the dataframe ---
     st.dataframe(
-        filtered_df,
+        df_tickets,
         key="ticket_queue",
         on_select="rerun",
         selection_mode="single-row",
@@ -169,13 +198,31 @@ def show_dashboard(staff_list):
         hide_index=True
     )
     
+    # --- Handle Row Selection ---
     if st.session_state.ticket_queue.selection.rows:
         selected_row_index = st.session_state.ticket_queue.selection.rows[0]
-        selected_id = filtered_df.iloc[selected_row_index]["_id"]
+        selected_id = df_tickets.iloc[selected_row_index]["_id"]
         
         st.session_state.selected_ticket_id = selected_id
         st.session_state.view = "detail"
         st.rerun()
+
+    st.divider()
+
+    # --- NEW: Pagination controls ---
+    col1, col2, col3 = st.columns([1, 1, 1])
+
+    if st.session_state.page > 0:
+        if col1.button("⬅️ Previous Page"):
+            st.session_state.page -= 1
+            st.rerun()
+    
+    col2.markdown(f"**Page {st.session_state.page + 1} of {total_pages}**")
+
+    if st.session_state.page < total_pages - 1:
+        if col3.button("Next Page ➡️"):
+            st.session_state.page += 1
+            st.rerun()
 
 
 def show_ticket_detail(ticket_id, staff_list):
@@ -198,6 +245,7 @@ def show_ticket_detail(ticket_id, staff_list):
         st.error("Ticket not found.")
         return
 
+    # --- Display Ticket Info ---
     st.subheader("Ticket Information")
     col1, col2 = st.columns(2)
     col1.metric("Status", current_ticket.get("status", "N/A"))
@@ -208,11 +256,21 @@ def show_ticket_detail(ticket_id, staff_list):
     
     st.divider()
     
+    # --- Ticket History ---
+    st.subheader("Ticket History")
+    current_notes = current_ticket.get("internal_notes", "")
+    if current_notes.strip():
+        st.text_area("Log", current_notes, height=200, disabled=True, key="ticket_history_log")
+    else:
+        st.info("No history or internal notes for this ticket yet.")
+
+    st.divider()
+    
     st.subheader("Support Actions")
     
     current_status = current_ticket.get("status", "New")
     current_assignee = current_ticket.get("assigned_to")
-    current_notes = current_ticket.get("internal_notes", "")
+    # current_notes is already defined above
 
     status_options = ["New", "In Progress", "Awaiting User", "Closed"]
     if current_status not in status_options:
@@ -255,7 +313,8 @@ def show_ticket_detail(ticket_id, staff_list):
                 }
             )
             st.success("Ticket updated successfully!")
-            get_all_tickets.clear()
+            # --- UPDATED: Clear this specific function's cache ---
+            get_all_tickets.clear() 
             st.session_state.view = "dashboard"
             st.session_state.selected_ticket_id = None
             st.rerun()
@@ -266,27 +325,21 @@ def show_ticket_detail(ticket_id, staff_list):
 
 # --- 5. Main Application Logic ---
 
-# Add the 'or (None, None, None)' to provide a default value
 name, authentication_status, username = authenticator.login() or (None, None, None)
 
-# Now, check the session state that the widget just updated.
 if st.session_state.authentication_status:
-    # --- LOGGED-IN VIEW ---
     st.sidebar.title(f"Welcome, *{st.session_state.name}*")
     authenticator.logout('Logout', 'sidebar')
 
-    staff_name_list = [user["name"] for user in users]
+    staff_name_list = [user.get("name", "Unknown Staff") for user in users]
 
     if st.session_state.view == "dashboard":
-        show_dashboard(staff_name_list) # <-- This call will now work
+        show_dashboard(staff_name_list) 
     elif st.session_state.view == "detail":
         show_ticket_detail(st.session_state.selected_ticket_id, staff_name_list)
 
 elif st.session_state.authentication_status == False:
-    # --- LOGIN FAILED ---
     st.error('Username/password is incorrect')
 
 elif st.session_state.authentication_status == None:
-    # --- DEFAULT LOGIN VIEW ---
-    # The login form is already on the page
     pass
